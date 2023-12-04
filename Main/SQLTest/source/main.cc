@@ -168,6 +168,17 @@ int main (int numArgs, char **args) {
 						if (myPlan != nullptr) {
 							auto res = myPlan->cost ();
 							cout << "cost was " << res.first << "\n";
+							MyDB_TableReaderWriterPtr outputTable = myPlan->execute();
+
+
+							MyDB_RecordIteratorAltPtr iter = outputTable->getIteratorAlt();
+							MyDB_RecordPtr rec = outputTable->getEmptyRecord();
+							int cnt = 0;
+							cout << "Top 30 records of the query" << endl;
+							while (iter->advance() && cnt++ < 30) {
+								iter->getCurrent(rec);
+								cout << "\t" << rec << endl;
+							}
 						}
 					}
 

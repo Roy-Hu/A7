@@ -647,6 +647,10 @@ public:
 		return "sum(" + child->toString () + ")";
 	}	
 
+	string toStringWithoutAgg() {
+		return child->toString ();
+	}
+
 	bool isSum () {
 		return true;
 	}
@@ -677,6 +681,10 @@ public:
 
 	string toString () {
 		return "avg(" + child->toString () + ")";
+	}	
+
+	string toStringWithoutAgg () {
+		return child->toString ();
 	}	
 
 	bool isAvg () {

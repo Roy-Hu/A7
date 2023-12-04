@@ -16,6 +16,10 @@ private:
 	vector <ExprTreePtr> allDisjunctions;
 	vector <ExprTreePtr> groupingClauses;
 
+	MyDB_SchemaPtr buildAggSchema (MyDB_TablePtr inputTable, vector <string> tableAlias);
+
+	LogicalOpPtr joinTwoTable (MyDB_TableReaderWriterPtr lTableRWPtr, MyDB_TableReaderWriterPtr rTableRWPtr, vector <pair <string, string>> tableNameAlias, bool finalJoin);
+
 public:
 	SFWQuery () {}
 
