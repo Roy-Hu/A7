@@ -1,6 +1,7 @@
-core*
-*.o
-*.tbl
 .vscode
-Build
+Build/
 *.bin
+*.tbl
+2
+*.o
+core*
