@@ -27,7 +27,7 @@ public:
 	// execute the entire plan (executing the children first), then execute this logical operation, and
 	// once this operation has been executed, delete the temporary tables associated with child operations
 	virtual MyDB_TableReaderWriterPtr execute () = 0;
-
+	virtual MyDB_SchemaPtr getSchema() = 0;
 	virtual ~LogicalOp () {}
 };
 
@@ -65,6 +65,7 @@ public:
 	// we don't really count the cost of the aggregate, so cost its subplan and return that
 	pair <double, MyDB_StatsPtr> cost ();
 	
+	MyDB_SchemaPtr getSchema() {return outputSpec->getSchema();};
 private:
 
 	LogicalOpPtr inputOp;
@@ -107,6 +108,7 @@ public:
 	// sides should be deleted (via a kill to killTable () on the buffer manager)
 	MyDB_TableReaderWriterPtr execute ();
 
+	MyDB_SchemaPtr getSchema() {return outputSpec->getSchema();};
 private:
 
 	LogicalOpPtr leftInputOp;
@@ -149,6 +151,8 @@ public:
 	// input into a join)
 	MyDB_TableReaderWriterPtr execute ();
 
+	MyDB_SchemaPtr getSchema() {return outputSpec->getSchema();};
+ 
 private:
 
 	MyDB_TableReaderWriterPtr inputSpec;

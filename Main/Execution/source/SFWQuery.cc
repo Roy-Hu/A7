@@ -3,7 +3,7 @@
 #define SFW_QUERY_CC
 
 #include "ParserTypes.h"
-	
+
 // builds and optimizes a logical query plan for a SFW query, returning the logical query plan
 // 
 // note that this implementation only works for two-table queries that do not have an aggregation
@@ -75,6 +75,78 @@ MyDB_SchemaPtr SFWQuery :: buildAggSchema (vector <pair <string, MyDB_AttTypePtr
 	return aggSchema;
 }
 
+vector <LogicalOpPtr> SFWQuery :: getAllTableScan (map <string, MyDB_TableReaderWriterPtr> &allTableReaderWriters) {
+	vector <LogicalOpPtr> opPtrs;
+	vector <ExprTreePtr> topCNF; 
+
+	for (auto a: allDisjunctions) {
+		topCNF.push_back (a);
+	}
+
+	for (int i = 0; i < tablesToProcess.size(); i++) {
+		vector <string> exprs;
+		vector <ExprTreePtr> CNF;
+		MyDB_SchemaPtr schema = make_shared <MyDB_Schema> ();
+
+		string tableAlias = tablesToProcess[i].second;
+		string tableName = tablesToProcess[i].first;
+
+		MyDB_TableReaderWriterPtr tableRwPtr = allTableReaderWriters[tableName];
+		
+		for (auto a: allDisjunctions) {
+			bool needOtherTable = false;
+			for (auto nameAlias : tablesToProcess) {
+				if (nameAlias.first == tableName) {
+					continue;
+				}
+
+				if (a->referencesTable(nameAlias.second)) {
+					needOtherTable = true;
+					break;
+				}
+
+				if (needOtherTable) break;
+			}
+
+			if (!needOtherTable) CNF.push_back(a);
+		}
+		cout << "Table " << tableName << endl;
+		// and see what we need from the left, and from the right
+		for (auto b: tableRwPtr->getTable()->getSchema ()->getAtts ()) {
+			bool needIt = false;
+			string alias; 
+			for (auto a: valuesToSelect) {
+				if (a->referencesAtt (tableAlias, b.first)) {
+					needIt = true;
+					break;
+				}
+			
+			}
+			for (auto a: topCNF) {
+				if (a->referencesAtt (tableAlias, b.first)) {
+					needIt = true;
+					break;
+				}
+			}
+
+			if (needIt) {
+				schema->getAtts ().push_back (make_pair (tableAlias + "_" + b.first, b.second));
+				exprs.push_back ("[" + b.first + "]");
+				cout << "\texpr: " << ("[" + b.first + "]") << "\n";
+			}
+		}
+
+		// and it's time to build the query plan
+		LogicalOpPtr tableScan = make_shared <LogicalTableScan> (tableRwPtr, 
+		make_shared <MyDB_Table> (tableAlias + "_Table", tableAlias + "_StorageLoc", schema), 
+		make_shared <MyDB_Stats> (tableRwPtr->getTable(), tableAlias), CNF, exprs);
+
+		opPtrs.push_back(tableScan);
+	}
+
+	return opPtrs;
+}
+
 LogicalOpPtr SFWQuery :: buildLogicalQueryPlan (map <string, MyDB_TablePtr> &allTables, map <string, MyDB_TableReaderWriterPtr> &allTableReaderWriters) {
 	MyDB_SchemaPtr topSchema = make_shared <MyDB_Schema> ();
 	LogicalOpPtr returnVal;
@@ -88,42 +160,14 @@ LogicalOpPtr SFWQuery :: buildLogicalQueryPlan (map <string, MyDB_TablePtr> &all
 		}
 	}
 
+	vector <LogicalOpPtr> scanOpPtrs = getAllTableScan(allTableReaderWriters);
+
 	// first, make sure we have exactly two tables... this prototype only works on two tables!!
 	if (tablesToProcess.size () == 1) {
-		vector <string> topExprs;
-		vector <ExprTreePtr> topCNF; 
-
-		MyDB_SchemaPtr scanSchema = make_shared <MyDB_Schema> ();
-
-		string tableName = tablesToProcess[0].first;
-		string tableAlias = tablesToProcess[0].second;
-
-		MyDB_TablePtr tableIn = allTables[tableName];
-
-		for (auto a: allDisjunctions) {
-			topCNF.push_back (a);
-		}
-		
-		for (auto b: tableIn->getSchema ()->getAtts ()) {
-			bool needIt = false;
-			for (auto a: valuesToSelect) {
-				if (a->referencesAtt (tableAlias, b.first)) {
-					needIt = true;
-				}
-			}
-
-			if (needIt) {
-				topSchema->getAtts ().push_back (make_pair (tableAlias + "_" + b.first, b.second));
-				topExprs.push_back ("[" + b.first + "]");
-			}
-		}
-
-		returnVal = make_shared <LogicalTableScan> (allTableReaderWriters[tableName], 
-		make_shared <MyDB_Table> ("topTable", "topStorageLoc", topSchema), 
-		make_shared <MyDB_Stats> (tableIn, tableAlias), topCNF, topExprs);
+		returnVal = scanOpPtrs[0];
 
 		if (groupingClauses.size () != 0 || areAggs) {
-			topSchema = buildAggSchema(tableIn->getSchema ()->getAtts(), {tablesToProcess[0].second});
+			topSchema = buildAggSchema(returnVal->getSchema ()->getAtts(), {tablesToProcess[0].second});
 
 			returnVal  = make_shared <LogicalAggregate> (returnVal, 
 			make_shared <MyDB_Table> ("aggTable", "aggStorageLoc", topSchema), valuesToSelect, 
@@ -131,26 +175,22 @@ LogicalOpPtr SFWQuery :: buildLogicalQueryPlan (map <string, MyDB_TablePtr> &all
 		}
 	} else {
 		// find the two input tables
-		MyDB_TablePtr leftTable = allTables[tablesToProcess[0].first];
-		MyDB_TablePtr rightTable = allTables[tablesToProcess[1].first];
 		vector <pair <string, string>> joinTableNameAlias = {tablesToProcess[0], tablesToProcess[1]};
 		vector <pair <string, MyDB_AttTypePtr>> joinSchemaAtts;
 
 		if (groupingClauses.size () != 0 || areAggs) {
-
-			LogicalOpPtr joinOp = joinTwoTable(leftTable, rightTable, joinSchemaAtts, allTableReaderWriters[tablesToProcess[0].first],
-			allTableReaderWriters[tablesToProcess[1].first], joinTableNameAlias, false);
+			
+			LogicalOpPtr joinOp = joinTwoTable(joinSchemaAtts, scanOpPtrs, joinTableNameAlias, false);
 
 			vector <string> tablesAlias = {tablesToProcess[0].second, tablesToProcess[1].second};
-			
+
 			MyDB_SchemaPtr joinSchema = buildAggSchema(joinSchemaAtts, tablesAlias);
 
 			returnVal  = make_shared <LogicalAggregate> (joinOp, 
 			make_shared <MyDB_Table> ("rtnTable", "rtnStorageLoc", joinSchema), valuesToSelect, 
 			groupingClauses);
 		} else {
-			returnVal = joinTwoTable(leftTable, rightTable, joinSchemaAtts, allTableReaderWriters[tablesToProcess[0].first], 
-			allTableReaderWriters[tablesToProcess[1].first], joinTableNameAlias, true);
+			returnVal = joinTwoTable(joinSchemaAtts, scanOpPtrs, joinTableNameAlias, true);
 		}
 	}
 
@@ -158,8 +198,7 @@ LogicalOpPtr SFWQuery :: buildLogicalQueryPlan (map <string, MyDB_TablePtr> &all
 	return returnVal;
 }
 
-LogicalOpPtr SFWQuery :: joinTwoTable (MyDB_TablePtr leftTable, MyDB_TablePtr rightTable, vector <pair <string, MyDB_AttTypePtr>> &atts,
-										MyDB_TableReaderWriterPtr lTableRWPtr, MyDB_TableReaderWriterPtr rTableRWPtr, 
+LogicalOpPtr SFWQuery :: joinTwoTable (vector <pair <string, MyDB_AttTypePtr>> &atts, vector <LogicalOpPtr> scanOpPtrs,
 										vector <pair <string, string>> tableNameAlias, bool finalJoin) {
 	cout << "Start join two table" << endl;
 	// find the various parts of the CNF
@@ -168,75 +207,27 @@ LogicalOpPtr SFWQuery :: joinTwoTable (MyDB_TablePtr leftTable, MyDB_TablePtr ri
 	vector <ExprTreePtr> topCNF; 
 	MyDB_SchemaPtr topSchema = make_shared <MyDB_Schema> ();
 
-	
 	// loop through all of the disjunctions and break them apart
 	for (auto a: allDisjunctions) {
 		bool inLeft = a->referencesTable (tableNameAlias[0].second);
-			bool inRight = a->referencesTable (tableNameAlias[1].second);
+		bool inRight = a->referencesTable (tableNameAlias[1].second);
 		if (inLeft && inRight) {
 			cout << "top " << a->toString () << "\n";
 			topCNF.push_back (a);
-		} else if (inLeft) {
-			cout << "left: " << a->toString () << "\n";
-			leftCNF.push_back (a);
-		} else {
-			cout << "right: " << a->toString () << "\n";
-			rightCNF.push_back (a);
 		}
 	}
 
-	// now get the left and right schemas for the two selections
-	MyDB_SchemaPtr leftSchema = make_shared <MyDB_Schema> ();
-	MyDB_SchemaPtr rightSchema = make_shared <MyDB_Schema> ();
 	MyDB_SchemaPtr totSchema = make_shared <MyDB_Schema> ();
-	vector <string> leftExprs;
-	vector <string> rightExprs;
 		
 	// and see what we need from the left, and from the right
-	for (auto b: leftTable->getSchema ()->getAtts ()) {
-		bool needIt = false;
-		for (auto a: valuesToSelect) {
-			if (a->referencesAtt (tableNameAlias[0].second, b.first)) {
-				needIt = true;
-			}
-		}
-		for (auto a: topCNF) {
-			if (a->referencesAtt (tableNameAlias[0].second, b.first)) {
-				needIt = true;
-			}
-		}
-		if (needIt) {
-			leftSchema->getAtts ().push_back (make_pair (tableNameAlias[0].second + "_" + b.first, b.second));
-			totSchema->getAtts ().push_back (make_pair (tableNameAlias[0].second + "_" + b.first, b.second));
-			leftExprs.push_back ("[" + b.first + "]");
-			cout << "left expr: " << ("[" + b.first + "]") << "\n";
-		}
+	for (auto b: scanOpPtrs[0]->getSchema()->getAtts ()) {
+		totSchema->getAtts ().push_back (make_pair (b.first, b.second));
 	}
 
-	cout << "left schema: " << leftSchema << "\n";
-
-	// and see what we need from the right, and from the right
-	for (auto b: rightTable->getSchema ()->getAtts ()) {
-		bool needIt = false;
-		for (auto a: valuesToSelect) {
-			if (a->referencesAtt (tableNameAlias[1].second, b.first)) {
-				needIt = true;
-			}
-		}
-		for (auto a: topCNF) {
-			if (a->referencesAtt (tableNameAlias[1].second, b.first)) {
-				needIt = true;
-			}
-		}
-		if (needIt) {
-			rightSchema->getAtts ().push_back (make_pair (tableNameAlias[1].second + "_" + b.first, b.second));
-			totSchema->getAtts ().push_back (make_pair (tableNameAlias[1].second + "_" + b.first, b.second));
-			rightExprs.push_back ("[" + b.first + "]");
-			cout << "right expr: " << ("[" + b.first + "]") << "\n";
-		}
+	for (auto b: scanOpPtrs[1]->getSchema()->getAtts ()) {
+		totSchema->getAtts ().push_back (make_pair (b.first, b.second));
 	}
-	cout << "right schema: " << rightSchema << "\n";
-		
+
 	// now we gotta figure out the top schema... get a record for the top
 	if (finalJoin) {
 		MyDB_Record myRec (totSchema);
@@ -254,21 +245,13 @@ LogicalOpPtr SFWQuery :: joinTwoTable (MyDB_TablePtr leftTable, MyDB_TablePtr ri
 	atts = topSchema->getAtts();
 	MyDB_TablePtr joinTablePtr = make_shared <MyDB_Table> ("topTable", "topStorageLoc", topSchema);
 
-	// and it's time to build the query plan
-	LogicalOpPtr leftTableScan = make_shared <LogicalTableScan> (lTableRWPtr, 
-		make_shared <MyDB_Table> ("leftTable", "leftStorageLoc", leftSchema), 
-		make_shared <MyDB_Stats> (leftTable, tableNameAlias[0].second), leftCNF, leftExprs);
-	LogicalOpPtr rightTableScan = make_shared <LogicalTableScan> (rTableRWPtr, 
-		make_shared <MyDB_Table> ("rightTable", "rightStorageLoc", rightSchema), 
-		make_shared <MyDB_Stats> (rightTable, tableNameAlias[1].second), rightCNF, rightExprs);
-
 	if (finalJoin) {
-		return make_shared <LogicalJoin> (leftTableScan, rightTableScan, 
+		return make_shared <LogicalJoin> (scanOpPtrs[0], scanOpPtrs[1], 
 		joinTablePtr, topCNF, valuesToSelect);
 	} else {
 		// All used attribute will be in the output if projection is empty
 		vector <ExprTreePtr> emptyProjection;
-		return make_shared <LogicalJoin> (leftTableScan, rightTableScan, 
+		return make_shared <LogicalJoin> (scanOpPtrs[0], scanOpPtrs[1], 
 		joinTablePtr, topCNF, emptyProjection);
 	}
 }

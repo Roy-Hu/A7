@@ -175,14 +175,21 @@ MyDB_TableReaderWriterPtr LogicalJoin :: execute () {
 	string finalSelectionPredicate = concatPredicates(outputSelectionPredicate);
 	cout << "all predicates\n\t" << finalSelectionPredicate << endl;
 	
-	// SortMergeJoin myOp(lTable, rTable,
-	// 	tableOut, finalSelectionPredicate, 
-	// 	projections,
-	// 	hashAtts[0], "bool[true]",
-	// 	"bool[true]");
 
-	ScanJoin myOp(lTable, rTable, tableOut, finalSelectionPredicate, projections, hashAtts, "bool[true]", "bool[true]");
-	myOp.run ();
+
+	if (lTable->getNumPages() < lTable->getBufferMgr()->getPageNum() || 
+		rTable->getNumPages() < rTable->getBufferMgr()->getPageNum()) {
+		ScanJoin myOp(lTable, rTable, tableOut, finalSelectionPredicate, projections, hashAtts, "bool[true]", "bool[true]");
+		myOp.run ();
+	} else {
+		cout << "Memory not enough to fit the smaller table, use sort-merge join" << endl; 
+		SortMergeJoin myOp(lTable, rTable,
+							tableOut, finalSelectionPredicate, 
+							projections,
+							hashAtts[0], "bool[true]",
+							"bool[true]");
+		myOp.run ();
+	}
 
 	cout << "Finish Join" << endl;
 	return tableOut;

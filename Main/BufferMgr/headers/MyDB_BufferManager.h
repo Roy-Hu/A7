@@ -45,6 +45,7 @@ public:
 	// table
 	MyDB_PageHandle getPage ();
 
+	int getPageNum () {return numPages;};
 	// gets the i^th page in the table whichTable... the only difference 
 	// between this method and getPage (whicTable, i) is that the page will be 
 	// pinned in RAM; it cannot be written out to the file... note that in Chris'
