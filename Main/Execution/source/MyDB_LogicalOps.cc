@@ -175,10 +175,8 @@ MyDB_TableReaderWriterPtr LogicalJoin :: execute () {
 	string finalSelectionPredicate = concatPredicates(outputSelectionPredicate);
 	cout << "all predicates\n\t" << finalSelectionPredicate << endl;
 	
-
-
-	if (lTable->getNumPages() < lTable->getBufferMgr()->getPageNum() || 
-		rTable->getNumPages() < rTable->getBufferMgr()->getPageNum()) {
+	if (lTable->getTable()->lastPage() < lTable->getBufferMgr()->getPageNum() || 
+		rTable->getTable()->lastPage() < rTable->getBufferMgr()->getPageNum()) {
 		ScanJoin myOp(lTable, rTable, tableOut, finalSelectionPredicate, projections, hashAtts, "bool[true]", "bool[true]");
 		myOp.run ();
 	} else {
@@ -188,7 +186,7 @@ MyDB_TableReaderWriterPtr LogicalJoin :: execute () {
 							projections,
 							hashAtts[0], "bool[true]",
 							"bool[true]");
-		myOp.run ();
+			myOp.run ();
 	}
 
 	cout << "Finish Join" << endl;
