@@ -4,6 +4,9 @@
 
 #include "ExprTree.h"
 #include "MyDB_LogicalOps.h"
+#include <limits>
+#include <set>
+#include <unordered_map>
 
 // structure that stores an entire SFW query
 struct SFWQuery {
@@ -18,13 +21,15 @@ private:
 
 	MyDB_SchemaPtr buildAggSchema (LogicalOpPtr joinOpPtr);
 	
-	vector <LogicalOpPtr> getAllTableScan (map <string, MyDB_TableReaderWriterPtr> &allTableReaderWriters);
+	map <string, LogicalOpPtr> getAllTableScan (map <string, MyDB_TableReaderWriterPtr> &allTableReaderWriters);
 
 	LogicalOpPtr joinTwoTable (LogicalOpPtr lOpPtr, LogicalOpPtr rOpPtr, 
 		vector <pair <string, string>> LtableNameAlias, vector <pair <string, string>> RtableNameAlias, bool finalJoin);
 
+	pair <double, MyDB_StatsPtr> optimize (map <string, LogicalOpPtr> scanOpPtrs, map <vector <string>, pair <double, MyDB_StatsPtr>> &optimizedSet);
+
 public:
-	SFWQuery () {}
+	SFWQuery () {};
 
 	SFWQuery (struct ValueList *selectClause, struct FromList *fromClause, 
 		struct CNF *cnf, struct ValueList *grouping);
@@ -43,6 +48,7 @@ public:
 
 	~SFWQuery () {}
 
+	int optimizedCnt = 0;
 	void print ();
 
 	#include "FriendDecls.h"
