@@ -7,6 +7,39 @@
 #include <limits>
 #include <set>
 #include <unordered_map>
+#include <algorithm>
+
+
+class MyDB_JoinTree;
+
+typedef shared_ptr <MyDB_JoinTree> MyDB_JoinTreePtr;
+
+class MyDB_JoinTree {
+public:
+	MyDB_JoinTreePtr lhs;
+	MyDB_JoinTreePtr rhs;
+	string table;
+	bool joined = true;
+
+	MyDB_JoinTree () : joined(true) {};
+	MyDB_JoinTree (string tableName) : table (tableName) , joined(false) {};
+	MyDB_JoinTree (MyDB_JoinTreePtr l, MyDB_JoinTreePtr r) : lhs (l), rhs(r) {};
+
+	void print(MyDB_JoinTreePtr t) {
+		if (t->lhs != nullptr) {
+			print(t->lhs);
+		} 
+
+		if (t->rhs != nullptr) {
+			print(t->rhs);
+		}
+
+		if (!t->joined) {
+			cout << "\tTable: " << t->table << endl;
+			return;
+		}
+	};
+};
 
 // structure that stores an entire SFW query
 struct SFWQuery {
@@ -26,7 +59,8 @@ private:
 	LogicalOpPtr joinTwoTable (LogicalOpPtr lOpPtr, LogicalOpPtr rOpPtr, 
 		vector <pair <string, string>> LtableNameAlias, vector <pair <string, string>> RtableNameAlias, bool finalJoin);
 
-	pair <double, MyDB_StatsPtr> optimize (map <string, LogicalOpPtr> scanOpPtrs, map <vector <string>, pair <double, MyDB_StatsPtr>> &optimizedSet);
+	pair <MyDB_JoinTreePtr, MyDB_StatsPtr> optimize (map <string, LogicalOpPtr> scanOpPtrs, map <vector <string>, 
+														pair <MyDB_JoinTreePtr, MyDB_StatsPtr>> &optimizedSet);
 
 public:
 	SFWQuery () {};

@@ -179,6 +179,8 @@ int main (int numArgs, char **args) {
 								iter->getCurrent(rec);
 								cout << "\t" << rec << endl;
 							}
+						} else {
+							cout << "[Err] No query plan" << endl;
 						}
 					}
 

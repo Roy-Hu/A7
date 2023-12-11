@@ -76,10 +76,13 @@ MyDB_SchemaPtr SFWQuery :: buildAggSchema (LogicalOpPtr joinOpPtr) {
 	return aggSchema;
 }
 
-pair <double, MyDB_StatsPtr> SFWQuery :: optimize (map <string, LogicalOpPtr> scanOpPtrs, map <vector <string>, pair <double, MyDB_StatsPtr>> &optimizedSet) {
-	pair <double, MyDB_StatsPtr> bestStats = make_pair(numeric_limits<float>::infinity(), make_shared <MyDB_Stats> ());	
+pair <MyDB_JoinTreePtr, MyDB_StatsPtr> SFWQuery :: optimize (map <string, LogicalOpPtr> scanOpPtrs, map <vector <string>, pair <MyDB_JoinTreePtr, MyDB_StatsPtr>> &optimizedSet) {
+	cout << "[OPTIMIZED] Start" << endl;
+	double bestCost = numeric_limits<float>::infinity();
+	pair <MyDB_JoinTreePtr, MyDB_StatsPtr> best = make_pair(make_shared <MyDB_JoinTree> (), make_shared <MyDB_Stats> ());	
     vector<pair<map <string, LogicalOpPtr>, map <string, LogicalOpPtr>>> subsetComplement;
 	optimizedCnt++;
+		
     // Loop through all possible subsets
     for (int i = 0; i < (1 << scanOpPtrs.size()); i++) {
         map <string, LogicalOpPtr> subset, complement;
@@ -101,8 +104,12 @@ pair <double, MyDB_StatsPtr> SFWQuery :: optimize (map <string, LogicalOpPtr> sc
 	if (scanOpPtrs.size() == 1) {
 		for (auto s : scanOpPtrs) {
 			vector <string> curSet({s.first});
-			optimizedSet[curSet] = s.second->cost();
-			return optimizedSet[curSet];
+			if (optimizedSet.find(curSet) != optimizedSet.end()) {
+				best = optimizedSet[curSet] = best;
+			} else {
+				best = make_pair(make_shared <MyDB_JoinTree> (s.first), s.second->cost().second);
+				optimizedSet[curSet] = best;
+			}
 		}
 	} else {
 		for (auto sc : subsetComplement) {
@@ -115,13 +122,27 @@ pair <double, MyDB_StatsPtr> SFWQuery :: optimize (map <string, LogicalOpPtr> sc
 			vector <string> complementsName;
 			vector <string> allNameLR;
 			vector <string> allNameRL;
+			vector <string> lTableAlias;
+			vector <string> rTableAlias;
 
 			for (auto s : subset) {
 				subsetName.push_back(s.first);
+
+				for (auto t : tablesToProcess) {
+					if (t.first == s.first) {
+						lTableAlias.push_back(t.second);
+					}
+				}
 			}
 
 			for (auto c : complements) {
 				complementsName.push_back(c.first);
+
+				for (auto t : tablesToProcess) {
+					if (t.first == c.first) {
+						lTableAlias.push_back(t.second);
+					}
+				}
 			}
 
 			allNameLR.reserve(subsetName.size() + complementsName.size());
@@ -138,11 +159,8 @@ pair <double, MyDB_StatsPtr> SFWQuery :: optimize (map <string, LogicalOpPtr> sc
 				return optimizedSet[allNameRL];
 			}	
 
-			pair <double, MyDB_StatsPtr> lCost;
-			pair <double, MyDB_StatsPtr> rCost;
-
-			optimizedSet.find(subsetName) != optimizedSet.end() ? lCost = optimizedSet[subsetName] : lCost = optimize(subset, optimizedSet);
-			optimizedSet.find(complementsName) != optimizedSet.end() ? rCost = optimizedSet[complementsName] : rCost = optimize(complements, optimizedSet);
+			pair <MyDB_JoinTreePtr, MyDB_StatsPtr> lCost;
+			pair <MyDB_JoinTreePtr, MyDB_StatsPtr> rCost;
 
 			if (optimizedSet.find(subsetName) == optimizedSet.end()) {
 				int i = 0;		
@@ -150,6 +168,9 @@ pair <double, MyDB_StatsPtr> SFWQuery :: optimize (map <string, LogicalOpPtr> sc
 				for (auto s : subset) {
 					cout << "\tTable " << i++ << ", "<< s.first <<endl;
 				}
+				lCost = optimize(subset, optimizedSet);
+			} else {
+				lCost = optimizedSet[subsetName];
 			}
 
 			if (optimizedSet.find(complementsName) == optimizedSet.end()) {
@@ -158,40 +179,51 @@ pair <double, MyDB_StatsPtr> SFWQuery :: optimize (map <string, LogicalOpPtr> sc
 				for (auto s : complements) {
 					cout << "\tTable " << i++ << ", "<< s.first <<endl;
 				}
+				rCost = optimize(complements, optimizedSet);
+			} else {
+				rCost = optimizedSet[complementsName];
 			}
 
-			vector <ExprTreePtr> CNF; 
-			for (auto a: allDisjunctions) {
-				bool needOtherTable = false;
-				for (auto nameAlias : tablesToProcess) {
-					if (subset.count(nameAlias.first) || complements.count(nameAlias.first)) {
-						continue;
-					}
+			MyDB_JoinTreePtr curJoinSeq = make_shared <MyDB_JoinTree> (lCost.first, rCost.first);
 
-					if (a->referencesTable(nameAlias.second)) {
-						needOtherTable = true;
+			vector <ExprTreePtr> CNF; 
+			// loop through all of the disjunctions and break them apart
+			for (auto a: allDisjunctions) {
+				bool inLeft = false;
+				bool inRight = false;
+
+				for (auto b : lTableAlias) {
+					if (a->referencesTable (b)) {
+						inLeft = true;
 						break;
 					}
-
-					if (needOtherTable) break;
 				}
 
-				if (!needOtherTable) CNF.push_back(a);
+				for (auto b : rTableAlias) {
+					if (a->referencesTable (b)) {
+						inRight = true;
+						break;
+					}
+				}
+
+				if (inLeft && inRight) {
+					cout << "top " << a->toString () << "\n";
+					CNF.push_back (a);
+				}
 			}
 			
 			MyDB_StatsPtr curStast = lCost.second->costJoin(CNF, rCost.second);
-			if (curStast->getTupleCount() < bestStats.first) {
-				bestStats = make_pair(curStast->getTupleCount() ,curStast);
+			if (curStast->getTupleCount() < bestCost) {
+				best = make_pair(curJoinSeq, curStast);
+				bestCost = curStast->getTupleCount();
 			}
 
-
-			optimizedSet[allNameLR] = make_pair(curStast->getTupleCount(), curStast);
-			optimizedSet[allNameRL] = make_pair(curStast->getTupleCount(), curStast);
-
+			optimizedSet[allNameLR] = make_pair(curJoinSeq, curStast);
+			optimizedSet[allNameRL] = make_pair(curJoinSeq, curStast);
 		}
 	}
 
-	return bestStats;
+	return best;
 }
 
 map <string, LogicalOpPtr> SFWQuery :: getAllTableScan (map <string, MyDB_TableReaderWriterPtr> &allTableReaderWriters) {
@@ -269,6 +301,7 @@ map <string, LogicalOpPtr> SFWQuery :: getAllTableScan (map <string, MyDB_TableR
 LogicalOpPtr SFWQuery :: buildLogicalQueryPlan (map <string, MyDB_TablePtr> &allTables, map <string, MyDB_TableReaderWriterPtr> &allTableReaderWriters) {
 	MyDB_SchemaPtr topSchema = make_shared <MyDB_Schema> ();
 	LogicalOpPtr returnVal;
+	bool isOptimize = false;
 
 	// also, make sure that there are no aggregates in herre
 	bool areAggs = false;
@@ -292,16 +325,22 @@ LogicalOpPtr SFWQuery :: buildLogicalQueryPlan (map <string, MyDB_TablePtr> &all
 			make_shared <MyDB_Table> ("aggTable", "aggStorageLoc", topSchema), valuesToSelect, 
 			groupingClauses);
 		}
+	} else if (isOptimize) {
+		optimizedCnt = 0;
+		map <vector <string>, pair <MyDB_JoinTreePtr, MyDB_StatsPtr>> optimizedSet;
+		pair <MyDB_JoinTreePtr, MyDB_StatsPtr> opt = optimize(scanOpPtrs, optimizedSet);
+
+		cout << "\n\nUsed " << optimizedCnt << " recurssions to find the OPT" << endl;
+		cout << "OPT Cost " << opt.second->getTupleCount() << endl;
+		cout << "Join table sequence" << endl;
+		opt.first->print(opt.first);
+
+		cout << "\n\n";
 	} else {
 		// find the two input tables
 		pair <string, string> lhsNameAlias = tablesToProcess[0];
 		pair <string, string> rhsNameAlias = tablesToProcess[1];
 		vector <pair <string, string>> joinTableNameAlias = {lhsNameAlias, rhsNameAlias};
-
-		map <vector <string>, pair <double, MyDB_StatsPtr>> optimizedSet;
-		optimize(scanOpPtrs, optimizedSet);
-
-		cout << "Used " << optimizedCnt << " recurssions to find the OPT" << endl;
 
 		LogicalOpPtr lhs = scanOpPtrs[lhsNameAlias.first], rhs;
 		vector <pair <string, string>> lhsAlias = {lhsNameAlias};
@@ -320,12 +359,17 @@ LogicalOpPtr SFWQuery :: buildLogicalQueryPlan (map <string, MyDB_TablePtr> &all
 			make_shared <MyDB_Table> ("rtnTable", "rtnStorageLoc", joinSchema), valuesToSelect, 
 			groupingClauses);
 		} else {
-			for (int i = 1; i < tablesToProcess.size(); i++) {
+			int i = 1;
+			for (i = 1; i < tablesToProcess.size() - 1; i++) {
 				rhsNameAlias = tablesToProcess[i];
 				rhs = scanOpPtrs[rhsNameAlias.first];
-				lhs = joinTwoTable(lhs, rhs, lhsAlias, {rhsNameAlias}, true);
+				lhs = joinTwoTable(lhs, rhs, lhsAlias, {rhsNameAlias}, false);
 				lhsAlias.push_back(rhsNameAlias);
 			}
+
+			rhsNameAlias = tablesToProcess[i];
+			rhs = scanOpPtrs[rhsNameAlias.first];
+			returnVal = joinTwoTable(lhs, rhs, lhsAlias, {rhsNameAlias}, true);
 		}
 	}
 
